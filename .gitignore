@@ -1,0 +1,16 @@
+/build/
+/toolchain/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# clangd / IDE tooling
+compile_commands.json
+.cache/
