@@ -20,6 +20,15 @@
 // Implemented in kernel/src/context_switch.S.
 extern "C" void context_switch(void **prev_sp, void **next_sp);
 
+// Bridges context_switch()'s `ret`-based control transfer into a normal,
+// argument-passing AAPCS64 call: entered exactly like any other never-run
+// thread (pointed to by a SavedFrame's `x30`), it moves the value in
+// `x19` into `x0` and branches into threads::thread_entry() -- giving
+// that function a real argument despite having been "returned into"
+// rather than called. See context_switch.S and
+// threads::make_thread_tcb() (kernel/src/threads.cpp).
+extern "C" void thread_trampoline();
+
 // The exact register frame context_switch() saves to and restores from a
 // thread's stack -- field order matches the stp/ldp offsets in
 // context_switch.S exactly (x19 first at the lowest address, x30 last at

@@ -21,7 +21,7 @@ inline uint64_t read_core_id() {
     return id;
 }
 
-extern "C" void ap_entry(limine_mp_info *info) {
+extern "C" [[noreturn]] void ap_entry(limine_mp_info *info) {
     write_core_id(info->extra_argument);
     // MAIR_EL1/TCR_EL1/TTBR0_EL1 are per-core; this core needs its own copy
     // of the identity map mmu::init() built before it can reach the UART.
@@ -35,9 +35,7 @@ extern "C" void ap_entry(limine_mp_info *info) {
     *p = '\0';
     console::print(line);
 
-    for(;;) {
-        asm volatile("wfi");
-    }
+    threads::stop();
 }
 
 } // namespace
