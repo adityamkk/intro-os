@@ -53,22 +53,40 @@ boot-only behavior. A test reports its result by calling exactly one of:
 - `test::pass()` -- prints `TEST PASS` and stops the thread.
 - `test::fail("reason")` -- prints `TEST FAIL: reason` and stops the thread.
 
+Its console output (everything the test itself, or any thread it starts,
+prints) is checked against a golden file, `tests/<name>.ok`, byte for
+byte.
+
 ```sh
 make test              # build, boot, and check every test in tests/
-make test heap         # just tests/heap.cpp
+make test heap         # just tests/heap.cpp, checked against heap.ok
 make test heap hello   # multiple tests by name
 ```
 
 Under the hood, each test is linked into its own kernel ELF -- the exact
 same `kernel/src/*.cpp` objects as the normal build, plus that one test's
 object, whose `main()` overrides the kernel's weak default -- booted under
-QEMU with a timeout (`TEST_TIMEOUT=n make test ...`, default 10s), with its
-console output grepped for `TEST PASS`. A test that panics, calls
-`test::fail()`, hangs, or exceeds the timeout is reported as a failure,
-with its full console output printed for debugging.
+QEMU with a timeout (`TEST_TIMEOUT=n make test ...`, default 10s). Its
+console output is captured directly to a file (QEMU's own `-serial
+file:...`, not the host's stdout, which some QEMU/platform combinations
+handle unreliably), everything up through a fixed anchor line `kmain()`
+always prints first is discarded (the UEFI firmware/Limine boot log --
+`tests/*.ok` has no business needing to match that), and what's left is
+diffed against `tests/<name>.ok`. A test that panics, calls
+`test::fail()`, hangs, exceeds the timeout, or simply prints something
+different than expected is reported as a failure, with the diff and the
+full console output printed for debugging.
 
-To add a test, drop a new `tests/<name>.cpp` defining `main()` --
-`make test` picks it up automatically, no other wiring needed. See the
-existing tests for examples: `hello.cpp` is a minimal smoke test,
-`heap.cpp` exercises the allocator, and `multithreading.cpp` exercises
-concurrent `threads::go()`/`context_switch()` across cores.
+The normal boot banner (`Hello, World!` / `Booted on core...`) and each
+secondary core's online greeting are both suppressed during tests (see
+the `print_boot_banner`/`print_ap_greeting` overrides in
+`tests/test_util.hpp`) -- they embed data (which core printed it, in what
+order, `-smp`'s setting) that isn't deterministic enough for a byte-for-
+byte comparison.
+
+To add a test, drop a new `tests/<name>.cpp` defining `main()` and a
+matching `tests/<name>.ok` with its expected output -- `make test` picks
+it up automatically, no other wiring needed. See the existing tests for
+examples: `hello.cpp` is a minimal smoke test, `heap.cpp` exercises the
+allocator, and `multithreading.cpp` exercises concurrent
+`threads::go()`/`context_switch()` across cores.

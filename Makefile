@@ -198,17 +198,23 @@ TEST_BUILD_DIR := $(BUILD_DIR)/tests
 # a bug that hangs a thread instead of reaching test::pass()/fail()).
 TEST_TIMEOUT ?= 10
 
+# The fixed line kmain() (kernel/src/main.cpp) always prints first, before
+# anything a test or the (possibly-overridden) boot banner produces. Used
+# below to discard the UEFI firmware/Limine boot log a tests/*.ok file has
+# no business needing to match -- keep this in sync with main.cpp's string
+# if it ever changes.
+TEST_BOOT_MARKER := --- kernel output begins ---
+
 $(TEST_BUILD_DIR)/obj/%.o: $(TESTS_DIR)/%.cpp $(TOOLCHAIN_DIR)/.deps-obtained Makefile
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
 
 -include $(patsubst $(TESTS_DIR)/%.cpp,$(TEST_BUILD_DIR)/obj/%.d,$(TEST_SRCS))
 
-# Builds one test's kernel+ISO and runs it under QEMU, grepping its
-# console output for the "TEST PASS" line tests/test_util.hpp's
-# test::pass() prints (test::fail(), an unhandled panic, or the timeout
-# expiring all leave that line out, and are all reported as failures).
-# $(1) is the test's name (its .cpp file's basename, e.g. "heap").
+# Builds one test's kernel+ISO, runs it under QEMU, and diffs its console
+# output -- everything after TEST_BOOT_MARKER, with \r\n normalized to \n
+# -- against tests/<name>.ok, byte for byte. $(1) is the test's name (its
+# .cpp file's basename, e.g. "heap").
 define TEST_TEMPLATE
 
 $(TEST_BUILD_DIR)/$(1)/kernel: $(OBJS) $(TEST_BUILD_DIR)/obj/$(1).o kernel/linker/aarch64.ld
@@ -220,19 +226,25 @@ $(TEST_BUILD_DIR)/$(1)/test.iso: $(TEST_BUILD_DIR)/$(1)/kernel limine.conf $(TOO
 	$$(call MAKE_ISO,$(TEST_BUILD_DIR)/$(1)/kernel,$$@,$(TEST_BUILD_DIR)/$(1)/iso_root)
 
 .PHONY: test-$(1)
-test-$(1): $(TEST_BUILD_DIR)/$(1)/test.iso
+test-$(1): $(TEST_BUILD_DIR)/$(1)/test.iso $(TESTS_DIR)/$(1).ok
 	@echo "--- $(1) ---"
-	@rm -f $(TEST_BUILD_DIR)/$(1)/output.log $(TEST_BUILD_DIR)/$(1)/qemu.log
+	@rm -f $(TEST_BUILD_DIR)/$(1)/output.log $(TEST_BUILD_DIR)/$(1)/qemu.log \
+	    $(TEST_BUILD_DIR)/$(1)/actual.log $(TEST_BUILD_DIR)/$(1)/diff.log
 	@timeout $(TEST_TIMEOUT) $(QEMU) $(QEMUFLAGS) \
 	    -drive if=pflash,unit=0,format=raw,file=$(OVMF_CODE),readonly=on \
 	    -serial file:$(TEST_BUILD_DIR)/$(1)/output.log \
 	    -monitor none \
 	    -cdrom $$< > $(TEST_BUILD_DIR)/$(1)/qemu.log 2>&1; \
-	if grep -q "TEST PASS" $(TEST_BUILD_DIR)/$(1)/output.log 2>/dev/null; then \
+	tr -d '\r' < $(TEST_BUILD_DIR)/$(1)/output.log 2>/dev/null \
+	    | awk -v marker='$(TEST_BOOT_MARKER)' 'index($$$$0, marker) > 0 { f = 1; next } f' \
+	    > $(TEST_BUILD_DIR)/$(1)/actual.log; \
+	if diff -u $(TESTS_DIR)/$(1).ok $(TEST_BUILD_DIR)/$(1)/actual.log > $(TEST_BUILD_DIR)/$(1)/diff.log 2>&1; then \
 	    echo "PASS: $(1)"; \
 	else \
 	    echo "FAIL: $(1)"; \
-	    echo "--- guest console (output.log) ---"; \
+	    echo "--- diff (expected: $(TESTS_DIR)/$(1).ok, actual: kernel output after boot) ---"; \
+	    cat $(TEST_BUILD_DIR)/$(1)/diff.log; \
+	    echo "--- full guest console, including firmware boot (output.log) ---"; \
 	    cat $(TEST_BUILD_DIR)/$(1)/output.log 2>/dev/null; \
 	    echo "--- qemu process output (qemu.log) ---"; \
 	    cat $(TEST_BUILD_DIR)/$(1)/qemu.log 2>/dev/null; \
