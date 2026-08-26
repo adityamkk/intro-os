@@ -42,3 +42,24 @@ context_switch:
     ret
 
 .size context_switch, . - context_switch
+
+// void thread_trampoline()
+//
+// context_switch()'s `ret` above is not a `bl`: it doesn't put anything
+// meaningful in x0, so a thread that has never run can't receive a real
+// AAPCS64 argument straight from context_switch() the way a normally
+// -bl'd function would. threads::make_thread_tcb() (threads.cpp) works
+// around this by pointing a fresh thread's frame at this trampoline
+// instead of straight at threads::thread_entry(), with the real entry
+// function stashed in x19 -- a register context_switch() restores like
+// any other. All this does is move that value into x0, where
+// threads::thread_entry() actually expects to find its argument, then
+// branch (not link -- nothing will ever return here) into it.
+.global thread_trampoline
+.type thread_trampoline, %function
+
+thread_trampoline:
+    mov x0, x19
+    b thread_entry
+
+.size thread_trampoline, . - thread_trampoline

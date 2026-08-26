@@ -5,7 +5,9 @@
 #include "console.hpp"
 #include "heap.hpp"
 #include "mmu.hpp"
+#include "percore.hpp"
 #include "smp.hpp"
+#include "threads.hpp"
 
 extern "C" {
 
@@ -50,6 +52,15 @@ namespace {
 
 } // namespace
 
+// The kernel's actual test/workload entry point: kmain() schedules this
+// (see the bottom of kmain() below) once boot is done. A specific
+// tests/*.cpp translation unit is expected to define its own strong,
+// extern "C" `main()`, which overrides this weak default at link time --
+// see the Makefile's test harness. Plain `make`/`make run` (no test
+// linked in) falls back to this, which does nothing at all -- go()
+// stops the thread automatically once main() returns.
+extern "C" __attribute__((weak)) void main() {}
+
 extern "C" [[noreturn]] void kmain() {
     if (!LIMINE_BASE_REVISION_SUPPORTED(limine_base_revision)) {
         hang();
@@ -66,6 +77,11 @@ extern "C" [[noreturn]] void kmain() {
     // Must run before smp::init() releases the other cores: heap::init()
     // isn't safe to race against a concurrent malloc()/free().
     heap::init();
+
+    // Also must run before release: builds every core's idle TCB up
+    // front so no core needs to synchronize on percore::g_table just to
+    // find its own entry.
+    percore::init();
 
     smp::init(const_cast<limine_mp_response *>(mp_request.response));
     console::print("\n");
@@ -85,5 +101,6 @@ extern "C" [[noreturn]] void kmain() {
     *p = '\0';
     console::print(line);
 
-    hang();
+    threads::go(main);
+    threads::stop();
 }

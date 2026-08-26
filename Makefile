@@ -136,22 +136,118 @@ $(BUILD_DIR)/obj/%.o: kernel/src/%.S $(TOOLCHAIN_DIR)/.deps-obtained Makefile
 
 $(KERNEL_ELF): $(OBJS) kernel/linker/aarch64.ld
 	@mkdir -p $(dir $@)
-	$(LD) $(LDFLAGS) $(OBJS) -o $@
+	$(LD) $(LDFLAGS) $(OBJS) -o $@.tmp
+	mv $@.tmp $@
 
 -include $(DEPS)
 
 # ---- Bootable ISO ---------------------------------------------------------------
 
-$(ISO): $(KERNEL_ELF) limine.conf $(TOOLCHAIN_DIR)/.deps-obtained
-	rm -rf $(BUILD_DIR)/iso_root
-	mkdir -p $(BUILD_DIR)/iso_root/boot/limine $(BUILD_DIR)/iso_root/EFI/BOOT
-	cp $(KERNEL_ELF) $(BUILD_DIR)/iso_root/boot/kernel
-	cp limine.conf $(BUILD_DIR)/iso_root/boot/limine/
-	cp $(LIMINE_SHARE)/limine-uefi-cd.bin $(BUILD_DIR)/iso_root/boot/limine/
-	cp $(LIMINE_SHARE)/BOOTAA64.EFI $(BUILD_DIR)/iso_root/EFI/BOOT/
+# Packs a kernel ELF into a bootable Limine ISO. $(1) is the kernel ELF to
+# boot, $(2) the ISO path to produce, $(3) a scratch iso_root directory to
+# stage it in (must be unique per concurrent build -- the main kernel and
+# every test each get their own, so `make test` can build/run tests
+# without stomping on `make`'s own build/iso_root).
+#
+# Builds into $(2).tmp and only renames it to $(2) once xorriso has fully
+# succeeded: `mv` on the same filesystem is atomic, so an interrupted or
+# failed build (e.g. Ctrl-C mid-run) never leaves a corrupt-but-newer-than-
+# its-dependency $(2) behind for make to mistake as already up to date on
+# the next invocation.
+define MAKE_ISO
+	rm -rf $(3)
+	mkdir -p $(3)/boot/limine $(3)/EFI/BOOT
+	cp $(1) $(3)/boot/kernel
+	cp limine.conf $(3)/boot/limine/
+	cp $(LIMINE_SHARE)/limine-uefi-cd.bin $(3)/boot/limine/
+	cp $(LIMINE_SHARE)/BOOTAA64.EFI $(3)/EFI/BOOT/
+	rm -f $(2).tmp
 	xorriso -as mkisofs -R -r -J \
 	    -hfsplus -apm-block-size 2048 \
 	    --efi-boot boot/limine/limine-uefi-cd.bin \
 	    -efi-boot-part --efi-boot-image --protective-msdos-label \
-	    $(BUILD_DIR)/iso_root -o $@
-	rm -rf $(BUILD_DIR)/iso_root
+	    $(3) -o $(2).tmp
+	mv $(2).tmp $(2)
+	rm -rf $(3)
+endef
+
+$(ISO): $(KERNEL_ELF) limine.conf $(TOOLCHAIN_DIR)/.deps-obtained
+	$(call MAKE_ISO,$(KERNEL_ELF),$@,$(BUILD_DIR)/iso_root)
+
+# ---- Test harness -----------------------------------------------------------
+#
+# Each kernel/tests/*.cpp is a standalone testcase: it defines its own
+# extern "C" void main() (see tests/test_util.hpp), which kmain() schedules
+# and runs in place of the kernel's own weak default `main` (see
+# kernel/src/main.cpp). Building a test links that one test object
+# together with the exact same kernel/src objects ($(OBJS)) the normal
+# kernel uses -- nothing in kernel/src changes per test.
+#
+# `make test` runs every test; `make test <name>...` runs just those --
+# e.g. a test in tests/switch.cpp is run with `make test switch`. This
+# works via a standard make trick: any word after `test` on the command
+# line is registered as a no-op phony target instead of something make
+# would otherwise try (and fail) to build as a file.
+
+TESTS_DIR      := tests
+TEST_SRCS      := $(wildcard $(TESTS_DIR)/*.cpp)
+TEST_NAMES     := $(basename $(notdir $(TEST_SRCS)))
+TEST_BUILD_DIR := $(BUILD_DIR)/tests
+
+# How long a single test gets in QEMU before it's declared a failure (e.g.
+# a bug that hangs a thread instead of reaching test::pass()/fail()).
+TEST_TIMEOUT ?= 10
+
+$(TEST_BUILD_DIR)/obj/%.o: $(TESTS_DIR)/%.cpp $(TOOLCHAIN_DIR)/.deps-obtained Makefile
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
+
+-include $(patsubst $(TESTS_DIR)/%.cpp,$(TEST_BUILD_DIR)/obj/%.d,$(TEST_SRCS))
+
+# Builds one test's kernel+ISO and runs it under QEMU, grepping its
+# console output for the "TEST PASS" line tests/test_util.hpp's
+# test::pass() prints (test::fail(), an unhandled panic, or the timeout
+# expiring all leave that line out, and are all reported as failures).
+# $(1) is the test's name (its .cpp file's basename, e.g. "heap").
+define TEST_TEMPLATE
+
+$(TEST_BUILD_DIR)/$(1)/kernel: $(OBJS) $(TEST_BUILD_DIR)/obj/$(1).o kernel/linker/aarch64.ld
+	@mkdir -p $$(dir $$@)
+	$(LD) $(LDFLAGS) $(OBJS) $(TEST_BUILD_DIR)/obj/$(1).o -o $$@.tmp
+	mv $$@.tmp $$@
+
+$(TEST_BUILD_DIR)/$(1)/test.iso: $(TEST_BUILD_DIR)/$(1)/kernel limine.conf $(TOOLCHAIN_DIR)/.deps-obtained
+	$$(call MAKE_ISO,$(TEST_BUILD_DIR)/$(1)/kernel,$$@,$(TEST_BUILD_DIR)/$(1)/iso_root)
+
+.PHONY: test-$(1)
+test-$(1): $(TEST_BUILD_DIR)/$(1)/test.iso
+	@echo "--- $(1) ---"
+	@rm -f $(TEST_BUILD_DIR)/$(1)/output.log $(TEST_BUILD_DIR)/$(1)/qemu.log
+	@timeout $(TEST_TIMEOUT) $(QEMU) $(QEMUFLAGS) \
+	    -drive if=pflash,unit=0,format=raw,file=$(OVMF_CODE),readonly=on \
+	    -serial file:$(TEST_BUILD_DIR)/$(1)/output.log \
+	    -monitor none \
+	    -cdrom $$< > $(TEST_BUILD_DIR)/$(1)/qemu.log 2>&1; \
+	if grep -q "TEST PASS" $(TEST_BUILD_DIR)/$(1)/output.log 2>/dev/null; then \
+	    echo "PASS: $(1)"; \
+	else \
+	    echo "FAIL: $(1)"; \
+	    echo "--- guest console (output.log) ---"; \
+	    cat $(TEST_BUILD_DIR)/$(1)/output.log 2>/dev/null; \
+	    echo "--- qemu process output (qemu.log) ---"; \
+	    cat $(TEST_BUILD_DIR)/$(1)/qemu.log 2>/dev/null; \
+	    exit 1; \
+	fi
+
+endef
+
+$(foreach t,$(TEST_NAMES),$(eval $(call TEST_TEMPLATE,$(t))))
+
+ifeq (test,$(firstword $(MAKECMDGOALS)))
+  TEST_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+  $(eval $(TEST_ARGS):;@:)
+endif
+
+.PHONY: test
+test:
+	@$(MAKE) --no-print-directory $(addprefix test-,$(if $(TEST_ARGS),$(TEST_ARGS),$(TEST_NAMES)))
