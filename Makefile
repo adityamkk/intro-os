@@ -79,9 +79,11 @@ LDFLAGS := \
     --gc-sections \
     -T kernel/linker/aarch64.ld
 
-SRCS := $(wildcard kernel/src/*.cpp)
-OBJS := $(patsubst kernel/src/%.cpp,$(BUILD_DIR)/obj/%.o,$(SRCS))
-DEPS := $(OBJS:.o=.d)
+SRCS     := $(wildcard kernel/src/*.cpp)
+ASM_SRCS := $(wildcard kernel/src/*.S)
+OBJS     := $(patsubst kernel/src/%.cpp,$(BUILD_DIR)/obj/%.o,$(SRCS)) \
+            $(patsubst kernel/src/%.S,$(BUILD_DIR)/obj/%.o,$(ASM_SRCS))
+DEPS     := $(patsubst kernel/src/%.cpp,$(BUILD_DIR)/obj/%.d,$(SRCS))
 
 # ---- Top-level targets ------------------------------------------------------
 
@@ -124,6 +126,13 @@ $(TOOLCHAIN_DIR)/.deps-obtained:
 $(BUILD_DIR)/obj/%.o: kernel/src/%.cpp $(TOOLCHAIN_DIR)/.deps-obtained Makefile
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
+
+# Hand-written assembly (e.g. context_switch.S): no CXXFLAGS -- those tune
+# C++ codegen (-mgeneral-regs-only and friends) and don't apply to .S files,
+# which the compiler driver just preprocesses and assembles as-is.
+$(BUILD_DIR)/obj/%.o: kernel/src/%.S $(TOOLCHAIN_DIR)/.deps-obtained Makefile
+	@mkdir -p $(dir $@)
+	$(CXX) -c $< -o $@
 
 $(KERNEL_ELF): $(OBJS) kernel/linker/aarch64.ld
 	@mkdir -p $(dir $@)

@@ -4,6 +4,7 @@
 
 #include "console.hpp"
 #include "mmu.hpp"
+#include "threads.hpp"
 
 namespace {
 
@@ -34,7 +35,7 @@ extern "C" void ap_entry(limine_mp_info *info) {
     *p = '\0';
     console::print(line);
 
-    for (;;) {
+    for(;;) {
         asm volatile("wfi");
     }
 }
