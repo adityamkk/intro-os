@@ -1,5 +1,7 @@
 #include "console.hpp"
 
+#include "spinlock.hpp"
+
 namespace {
 
 // QEMU's "virt" machine maps the first PL011 UART at this physical address.
@@ -15,15 +17,7 @@ constexpr uint32_t kFlagTxFifoFull = 1u << 5; // TXFF
 volatile uint8_t *g_uart_base = reinterpret_cast<volatile uint8_t *>(kUartPhysBase);
 
 // Guards interleaved writes when multiple cores call print() at once.
-volatile int g_lock = 0;
-
-void lock() {
-    while (__atomic_test_and_set(&g_lock, __ATOMIC_ACQUIRE)) {
-        asm volatile("yield" ::: "memory");
-    }
-}
-
-void unlock() { __atomic_clear(&g_lock, __ATOMIC_RELEASE); }
+Spinlock g_lock;
 
 void putc_raw(char c) {
     while (*(g_uart_base + kFlagReg) & kFlagTxFifoFull) {
@@ -37,14 +31,14 @@ void putc_raw(char c) {
 namespace console {
 
 void print(const char *str) {
-    lock();
+    g_lock.lock();
     while (*str) {
         if (*str == '\n') {
             putc_raw('\r');
         }
         putc_raw(*str++);
     }
-    unlock();
+    g_lock.unlock();
 }
 
 void print_uint(uint64_t value) {

@@ -3,6 +3,7 @@
 #include <limine.h>
 
 #include "console.hpp"
+#include "heap.hpp"
 #include "mmu.hpp"
 #include "smp.hpp"
 
@@ -61,6 +62,10 @@ extern "C" [[noreturn]] void kmain() {
     mmu::init(executable_address_request.response->physical_base,
               executable_address_request.response->virtual_base);
     mmu::activate_this_core();
+
+    // Must run before smp::init() releases the other cores: heap::init()
+    // isn't safe to race against a concurrent malloc()/free().
+    heap::init();
 
     smp::init(const_cast<limine_mp_response *>(mp_request.response));
     console::print("\n");
