@@ -24,6 +24,10 @@ void idle_loop() {
                 delete pc.to_delete;
                 pc.to_delete = nullptr;
             }
+            if (pc.to_reschedule != nullptr) {
+                scheduler::schedule(pc.to_reschedule);
+                pc.to_reschedule = nullptr;
+            }
         }
     }
 }

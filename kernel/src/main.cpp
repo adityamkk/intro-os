@@ -52,6 +52,30 @@ namespace {
 
 } // namespace
 
+// Prints the kernel's startup banner. Weak so tests/test_util.hpp can
+// override it: `Hello, World!` and the core/total-core counts are fine
+// for a human watching `make run`, but they embed live, occasionally
+// nondeterministic data (which core happened to print this, `-smp`'s
+// setting) that a byte-for-byte tests/*.ok comparison can't tolerate.
+extern "C" __attribute__((weak)) void print_boot_banner(uint32_t core_id, uint32_t cpu_count) {
+    console::print("\n");
+
+    // The firmware/bootloader may leave the cursor mid-line (e.g. after a
+    // carriage-return-terminated progress message), so force a fresh line
+    // before our own output.
+    console::print("Hello, World!\n");
+
+    char line[64];
+    char *p = line;
+    p = console::append(p, "Booted on core ");
+    p = console::append_uint(p, core_id);
+    p = console::append(p, " of ");
+    p = console::append_uint(p, cpu_count);
+    p = console::append(p, " total.\n");
+    *p = '\0';
+    console::print(line);
+}
+
 // The kernel's actual test/workload entry point: kmain() schedules this
 // (see the bottom of kmain() below) once boot is done. A specific
 // tests/*.cpp translation unit is expected to define its own strong,
@@ -74,6 +98,15 @@ extern "C" [[noreturn]] void kmain() {
               executable_address_request.response->virtual_base);
     mmu::activate_this_core();
 
+    // The very first thing this kernel ever prints, always, regardless of
+    // print_boot_banner()'s override -- a fixed, content-independent
+    // anchor the test harness (Makefile's TEST_TEMPLATE) greps for to
+    // discard everything printed before it (the UEFI firmware/Limine
+    // boot log), which a tests/*.ok file has no business needing to
+    // match. Keep this string in sync with the Makefile's TEST_BOOT_MARKER
+    // if it ever changes.
+    console::print("--- kernel output begins ---\n");
+
     // Must run before smp::init() releases the other cores: heap::init()
     // isn't safe to race against a concurrent malloc()/free().
     heap::init();
@@ -84,22 +117,7 @@ extern "C" [[noreturn]] void kmain() {
     percore::init();
 
     smp::init(const_cast<limine_mp_response *>(mp_request.response));
-    console::print("\n");
-
-    // The firmware/bootloader may leave the cursor mid-line (e.g. after a
-    // carriage-return-terminated progress message), so force a fresh line
-    // before our own output.
-    console::print("Hello, World!\n");
-
-    char line[64];
-    char *p = line;
-    p = console::append(p, "Booted on core ");
-    p = console::append_uint(p, smp::me());
-    p = console::append(p, " of ");
-    p = console::append_uint(p, mp_request.response->cpu_count);
-    p = console::append(p, " total.\n");
-    *p = '\0';
-    console::print(line);
+    print_boot_banner(smp::me(), static_cast<uint32_t>(mp_request.response->cpu_count));
 
     threads::go(main);
     threads::stop();

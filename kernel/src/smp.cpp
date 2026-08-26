@@ -21,19 +21,31 @@ inline uint64_t read_core_id() {
     return id;
 }
 
+} // namespace
+
+// Prints a secondary core's online greeting. Weak so tests/test_util.hpp
+// can override it: which core happens to print this, and in what order
+// relative to the other cores, isn't deterministic -- unsuitable for a
+// byte-for-byte tests/*.ok comparison.
+extern "C" __attribute__((weak)) void print_ap_greeting(uint32_t core_id) {
+    char line[48];
+    char *p = line;
+    p = console::append(p, "Hello from core ");
+    p = console::append_uint(p, core_id);
+    p = console::append(p, ", online!\n");
+    *p = '\0';
+    console::print(line);
+}
+
+namespace {
+
 extern "C" [[noreturn]] void ap_entry(limine_mp_info *info) {
     write_core_id(info->extra_argument);
     // MAIR_EL1/TCR_EL1/TTBR0_EL1 are per-core; this core needs its own copy
     // of the identity map mmu::init() built before it can reach the UART.
     mmu::activate_this_core();
 
-    char line[48];
-    char *p = line;
-    p = console::append(p, "Hello from core ");
-    p = console::append_uint(p, smp::me());
-    p = console::append(p, ", online!\n");
-    *p = '\0';
-    console::print(line);
+    print_ap_greeting(smp::me());
 
     threads::stop();
 }

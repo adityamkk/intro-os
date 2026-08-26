@@ -16,7 +16,11 @@ struct PerCore {
     // by idle_loop() (percore.cpp) right before it context_switch()es.
     TCB *prev = nullptr;
 
+    // A completed / stopped TCB that is ready to delete.
     TCB *to_delete = nullptr;
+
+    // A TCB that is ready to be scheduled.
+    TCB *to_reschedule = nullptr;
 
     // The TCB currently running on this core (or, mid-switch, about to
     // be).
