@@ -1,5 +1,6 @@
 #include "percore.hpp"
 
+#include "panic.hpp"
 #include "scheduler.hpp"
 #include "smp.hpp"
 #include "threads.hpp"
@@ -23,6 +24,16 @@ void idle_loop() {
             if (pc.to_delete != nullptr) {
                 delete pc.to_delete;
                 pc.to_delete = nullptr;
+            }
+            if (pc.to_queue != nullptr) {
+                // Must have provided a queue and a spinlock
+                ASSERT(pc.to_add_to != nullptr);
+                ASSERT(pc.to_unlock != nullptr);
+                pc.to_add_to->push(pc.to_queue);
+                pc.to_unlock->unlock();
+                pc.to_queue = nullptr;
+                pc.to_add_to = nullptr;
+                pc.to_unlock = nullptr;
             }
             if (pc.to_reschedule != nullptr) {
                 scheduler::schedule(pc.to_reschedule);
