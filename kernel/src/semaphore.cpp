@@ -11,15 +11,7 @@ Semaphore::Semaphore(int64_t cnt) : counter(cnt) {}
 Semaphore::~Semaphore() { ASSERT(q.empty()); }
 
 void Semaphore::up() {
-    lock_.lock();
-    if (counter++ < 0) {
-        // Unlock someone
-        TCB *unblocked_tcb = nullptr;
-        bool got_value = q.pop(reinterpret_cast<void **>(&unblocked_tcb));
-        ASSERT(got_value); // Must have received value
-        scheduler::schedule(unblocked_tcb);
-    }
-    lock_.unlock();
+    // TODO: Implement Semaphore.up
 }
 
 void Semaphore::down() {

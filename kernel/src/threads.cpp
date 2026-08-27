@@ -73,13 +73,7 @@ TCB *make_thread_tcb(void (*func)()) {
 }
 
 void yield() {
-    percore::PerCore &pc = percore::g_table[smp::me()];
-
-    // Politely ask the idle thread to add the current thread to the ready queue AFTER the switch is done.
-    pc.to_reschedule = pc.curr;
-    pc.prev = pc.curr;
-    pc.curr = pc.idle;
-    switch_to(pc.prev, pc.curr);
+    // TODO: Implement this
 }
 
 } // namespace threads

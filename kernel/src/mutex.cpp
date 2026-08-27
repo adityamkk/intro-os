@@ -1,13 +1,12 @@
 #include "mutex.hpp"
 
-Mutex::Mutex() : sem(1) {
-    // Initialize the semaphore to size 1
-}
+// TODO: Implement Mutex
+Mutex::Mutex() {}
 
 void Mutex::lock() {
-    sem.down();
+    // TODO: Implement mutex lock
 }
 
 void Mutex::unlock() {
-    sem.up();
+    // TODO: Implement mutex unlock
 }
