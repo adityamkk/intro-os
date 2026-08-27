@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+#include "spin_queue.hpp"
+#include "spinlock.hpp"
 #include "tcb.hpp"
 
 // Per-core scheduling state, indexed by smp::me().
@@ -21,6 +23,11 @@ struct PerCore {
 
     // A TCB that is ready to be scheduled.
     TCB *to_reschedule = nullptr;
+
+    // Semaphore operation requests.
+    TCB *to_queue = nullptr;
+    SpinQueue* to_add_to = nullptr;
+    Spinlock* to_unlock = nullptr;
 
     // The TCB currently running on this core (or, mid-switch, about to
     // be).
