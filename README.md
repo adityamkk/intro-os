@@ -21,6 +21,14 @@ and run on QEMU.
   (`kernel/src/context_switch.S`) switches stacks, `scheduler.cpp` is a
   spinlock-guarded FIFO ready queue, and each core (`percore.hpp`) falls
   back to its own idle thread whenever that queue is empty.
+- `DiskReader` (`kernel/include/disk_reader.hpp`) -- reads raw 512-byte
+  sectors from the virtio-blk disk QEMU attaches (a small polled
+  virtio-mmio driver). No filesystem layer yet.
+- `Fat32` / `File` (`kernel/include/fat32.hpp`) -- read-only FAT32 on top of
+  a `DiskReader`: `Fat32::metadata()` (geometry, label, ...) and
+  `Fat32::find("/some/path")`, which returns a `File` whose
+  `read(offset, buf, len)` reads bytes at any offset. Supports long file
+  names and case-insensitive lookup; no writing yet.
 - `ASSERT()`/`KPANIC()` (`kernel/include/panic.hpp`) -- halts with a
   message identifying the failed invariant or unreachable code path.
 
@@ -83,6 +91,13 @@ the `print_boot_banner`/`print_ap_greeting` overrides in
 `tests/test_util.hpp`) -- they embed data (which core printed it, in what
 order, `-smp`'s setting) that isn't deterministic enough for a byte-for-
 byte comparison.
+
+A test may also have an optional `tests/<name>.dir` directory. If present,
+`make test` packs it into a 64MiB FAT32 image (`mkfs.fat` + mtools'
+`mcopy`, both needed on the host) and attaches it to QEMU as a read-only
+virtio-blk disk that the test's kernel code reads via `DiskReader`.
+`disk_reader.cpp` is the example: it checks the image's FAT32 magic numbers
+and finds a file from its `.dir`; `fat32.cpp` tests `Fat32`/`File`.
 
 To add a test, drop a new `tests/<name>.cpp` defining `main()` and a
 matching `tests/<name>.ok` with its expected output -- `make test` picks

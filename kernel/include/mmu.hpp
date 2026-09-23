@@ -23,4 +23,11 @@ void init(uint64_t kernel_physical_base, uint64_t kernel_virtual_base);
 // device MMIO.
 void activate_this_core();
 
+// Translates a virtual address inside the kernel image (any static or
+// global object, including the heap's arena) to the physical address a
+// DMA-capable device must be given. Only valid after init(), and only for
+// addresses within the kernel image -- not for device MMIO or stack memory
+// outside it.
+uint64_t virt_to_phys(const void *vaddr);
+
 } // namespace mmu

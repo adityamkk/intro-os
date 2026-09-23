@@ -5,6 +5,9 @@ namespace {
 alignas(4096) uint64_t g_l1_table[512];
 uint64_t g_l1_table_phys = 0;
 
+// physical_base - virtual_base (mod 2^64) of the kernel image.
+uint64_t g_image_phys_offset = 0;
+
 // MAIR_EL1 attribute index we use for device memory. Index 0 is guaranteed
 // by the Limine spec to already be Normal Write-Back (used for RAM); index
 // 1 is reserved for the framebuffer's caching type. All other indices are
@@ -28,6 +31,8 @@ namespace mmu {
 
 void init(uint64_t kernel_physical_base, uint64_t kernel_virtual_base) {
     g_l1_table[0] = kDescValidBlock | kAttrIndx | kApEl1Rw | kShOuter | kAf | kPxn | kUxn;
+
+    g_image_phys_offset = kernel_physical_base - kernel_virtual_base;
 
     uint64_t table_vaddr = reinterpret_cast<uint64_t>(g_l1_table);
     g_l1_table_phys = table_vaddr - kernel_virtual_base + kernel_physical_base;
@@ -61,6 +66,10 @@ void activate_this_core() {
         "dsb ish\n"
         "isb\n" ::
             : "memory");
+}
+
+uint64_t virt_to_phys(const void *vaddr) {
+    return reinterpret_cast<uint64_t>(vaddr) + g_image_phys_offset;
 }
 
 } // namespace mmu

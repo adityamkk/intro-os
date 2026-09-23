@@ -198,6 +198,40 @@ TEST_BUILD_DIR := $(BUILD_DIR)/tests
 # a bug that hangs a thread instead of reaching test::pass()/fail()).
 TEST_TIMEOUT ?= 10
 
+# QEMU flags attaching image $(1) as a read-only virtio-blk disk. The
+# force-legacy=false makes virtio-mmio speak the modern (v2) register
+# layout DiskReader implements, rather than the legacy default.
+QEMU_DISK_ARGS = -global virtio-mmio.force-legacy=false \
+    -drive if=none,id=disk0,format=raw,readonly=on,file=$(1) \
+    -device virtio-blk-device,drive=disk0
+
+# Size of the FAT32 image built from a tests/<name>.dir. FAT32 needs at
+# least 65525 clusters, so this (with 1-sector clusters) is about the
+# smallest mkfs.fat will accept; the file is sparse so it costs nothing.
+FAT32_IMAGE_MIB := 64
+
+FORCE:
+
+# Builds $(2), a FAT32 image holding the contents of directory $(1),
+# via mkfs.fat and mtools' mcopy -- no root, loop mounts or FUSE needed.
+# Skipped if $(2) is already newer than everything in $(1) (and the
+# Makefile). Written to $(2).tmp and renamed so a failed build never leaves
+# a half-made image behind (same reasoning as MAKE_ISO).
+define MAKE_FAT32_IMAGE
+	@mkdir -p $(dir $(2))
+	@if [ -e $(2) ] && [ -z "$$(find $(1) Makefile -newer $(2) -print -quit)" ]; then exit 0; fi; \
+	set -e; \
+	echo "mkfs.fat: $(2) <- $(1)"; \
+	rm -f $(2).tmp; \
+	truncate -s $(FAT32_IMAGE_MIB)M $(2).tmp; \
+	mkfs.fat -F 32 -s 1 -n INTROOS $(2).tmp > /dev/null; \
+	cd $(1); \
+	for f in * .[!.]*; do \
+	    if [ -e "$$f" ]; then mcopy -s -Q -i $(abspath $(2)).tmp "$$f" ::/; fi; \
+	done; \
+	mv $(abspath $(2)).tmp $(abspath $(2))
+endef
+
 # The fixed line kmain() (kernel/src/main.cpp) always prints first, before
 # anything a test or the (possibly-overridden) boot banner produces. Used
 # below to discard the UEFI firmware/Limine boot log a tests/*.ok file has
@@ -217,6 +251,18 @@ $(TEST_BUILD_DIR)/obj/%.o: $(TESTS_DIR)/%.cpp $(TOOLCHAIN_DIR)/.deps-obtained Ma
 # .cpp file's basename, e.g. "heap").
 define TEST_TEMPLATE
 
+# Optional: a tests/<name>.dir directory is packed into a FAT32 image
+# (MAKE_FAT32_IMAGE) and attached to QEMU as a virtio-blk disk, which
+# kernel code reads through DiskReader. Tests without one get no disk.
+TEST_HAS_DIR_$(1) := $(wildcard $(TESTS_DIR)/$(1).dir)
+TEST_DISK_$(1)    := $$(if $$(TEST_HAS_DIR_$(1)),$(TEST_BUILD_DIR)/$(1)/disk.img)
+
+# Depends on FORCE and checks for staleness itself (rather than listing the
+# directory's files as prerequisites) because file names may contain spaces,
+# which make can't represent in a prerequisite list.
+$(TEST_BUILD_DIR)/$(1)/disk.img: FORCE
+	$$(call MAKE_FAT32_IMAGE,$(TESTS_DIR)/$(1).dir,$$@)
+
 $(TEST_BUILD_DIR)/$(1)/kernel: $(OBJS) $(TEST_BUILD_DIR)/obj/$(1).o kernel/linker/aarch64.ld
 	@mkdir -p $$(dir $$@)
 	$(LD) $(LDFLAGS) $(OBJS) $(TEST_BUILD_DIR)/obj/$(1).o -o $$@.tmp
@@ -226,7 +272,7 @@ $(TEST_BUILD_DIR)/$(1)/test.iso: $(TEST_BUILD_DIR)/$(1)/kernel limine.conf $(TOO
 	$$(call MAKE_ISO,$(TEST_BUILD_DIR)/$(1)/kernel,$$@,$(TEST_BUILD_DIR)/$(1)/iso_root)
 
 .PHONY: test-$(1)
-test-$(1): $(TEST_BUILD_DIR)/$(1)/test.iso $(TESTS_DIR)/$(1).ok
+test-$(1): $(TEST_BUILD_DIR)/$(1)/test.iso $(TESTS_DIR)/$(1).ok $$(TEST_DISK_$(1))
 	@echo "--- $(1) ---"
 	@rm -f $(TEST_BUILD_DIR)/$(1)/output.log $(TEST_BUILD_DIR)/$(1)/qemu.log \
 	    $(TEST_BUILD_DIR)/$(1)/actual.log $(TEST_BUILD_DIR)/$(1)/diff.log
@@ -234,7 +280,8 @@ test-$(1): $(TEST_BUILD_DIR)/$(1)/test.iso $(TESTS_DIR)/$(1).ok
 	    -drive if=pflash,unit=0,format=raw,file=$(OVMF_CODE),readonly=on \
 	    -serial file:$(TEST_BUILD_DIR)/$(1)/output.log \
 	    -monitor none \
-	    -cdrom $$< > $(TEST_BUILD_DIR)/$(1)/qemu.log 2>&1; \
+	    $$(if $$(TEST_DISK_$(1)),$$(call QEMU_DISK_ARGS,$$(TEST_DISK_$(1)))) \
+	    -cdrom $(TEST_BUILD_DIR)/$(1)/test.iso > $(TEST_BUILD_DIR)/$(1)/qemu.log 2>&1; \
 	tr -d '\r' < $(TEST_BUILD_DIR)/$(1)/output.log 2>/dev/null \
 	    | awk -v marker='$(TEST_BOOT_MARKER)' 'index($$$$0, marker) > 0 { f = 1; next } f' \
 	    > $(TEST_BUILD_DIR)/$(1)/actual.log; \
