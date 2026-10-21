@@ -251,13 +251,8 @@ Fat32::Fat32(DiskReader &disk) : disk_(disk) {
 // (e.g. the computed sector is past the end of the disk); true otherwise.
 // ============================================================================
 bool Fat32::fat_next(uint32_t cluster, uint32_t &next) {
-    uint32_t byte_off = cluster * 4;
-    alignas(16) uint8_t sector[kSector];
-    if (!disk_.read_sectors(meta_.reserved_sectors + byte_off / kSector, 1, sector)) {
-        return false;
-    }
-    next = le32(sector + byte_off % kSector) & 0x0FFFFFFF;
-    return true;
+    // TODO: Implement
+    return false;
 }
 
 // A FAT32 directory is, physically, nothing special: just a file (or, for
