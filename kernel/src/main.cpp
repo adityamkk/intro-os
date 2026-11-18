@@ -3,9 +3,12 @@
 #include <limine.h>
 
 #include "console.hpp"
+#include "exceptions.hpp"
 #include "heap.hpp"
+#include "hhdm.hpp"
 #include "mmu.hpp"
 #include "percore.hpp"
+#include "pmm.hpp"
 #include "smp.hpp"
 #include "threads.hpp"
 
@@ -30,6 +33,25 @@ static volatile limine_mp_request mp_request = {
 __attribute__((used, section(".limine_requests")))
 static volatile limine_executable_address_request executable_address_request = {
     .id = LIMINE_EXECUTABLE_ADDRESS_REQUEST_ID,
+    .revision = 0,
+    .response = nullptr,
+};
+
+// Higher Half Direct Map: the offset at which all of physical memory is
+// mapped (see hhdm.hpp) -- how pmm.cpp/pagetable.cpp touch physical pages
+// they've just allocated.
+__attribute__((used, section(".limine_requests")))
+static volatile limine_hhdm_request hhdm_request = {
+    .id = LIMINE_HHDM_REQUEST_ID,
+    .revision = 0,
+    .response = nullptr,
+};
+
+// Memory map: which physical pages are actually usable RAM, for pmm.cpp
+// to hand out.
+__attribute__((used, section(".limine_requests")))
+static volatile limine_memmap_request memmap_request = {
+    .id = LIMINE_MEMMAP_REQUEST_ID,
     .revision = 0,
     .response = nullptr,
 };
@@ -90,7 +112,8 @@ extern "C" [[noreturn]] void kmain() {
         hang();
     }
 
-    if (mp_request.response == nullptr || executable_address_request.response == nullptr) {
+    if (mp_request.response == nullptr || executable_address_request.response == nullptr ||
+        hhdm_request.response == nullptr || memmap_request.response == nullptr) {
         hang();
     }
 
@@ -107,9 +130,17 @@ extern "C" [[noreturn]] void kmain() {
     // if it ever changes.
     console::print("--- kernel output begins ---\n");
 
+    hhdm::init(hhdm_request.response->offset);
+
     // Must run before smp::init() releases the other cores: heap::init()
     // isn't safe to race against a concurrent malloc()/free().
     heap::init();
+
+    // Also must run before release, and after heap::init() (pmm::alloc()
+    // is independent of the heap, but percore::init() right below needs
+    // both): seeds the physical page allocator every per-thread address
+    // space (including each core's idle thread, built next) draws from.
+    pmm::init(memmap_request.response);
 
     // Also must run before release: builds every core's idle TCB up
     // front so no core needs to synchronize on percore::g_table just to
@@ -117,6 +148,15 @@ extern "C" [[noreturn]] void kmain() {
     percore::init();
 
     smp::init(const_cast<limine_mp_response *>(mp_request.response));
+
+    // Needs smp::me() to be valid (it reads TPIDR_EL1, which smp::init()
+    // just set for this core via write_core_id()) to pick this core's own
+    // exception stack -- see install_vectors()'s own comment for why a
+    // dedicated stack is needed at all. Nothing before this point ever
+    // touches kmmap()'d memory, so there's nothing it would need to
+    // protect before now anyway.
+    exceptions::install_vectors();
+
     print_boot_banner(smp::me(), static_cast<uint32_t>(mp_request.response->cpu_count));
 
     threads::go(main);

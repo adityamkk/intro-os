@@ -3,6 +3,7 @@
 #include <limine.h>
 
 #include "console.hpp"
+#include "exceptions.hpp"
 #include "mmu.hpp"
 #include "threads.hpp"
 
@@ -44,6 +45,7 @@ extern "C" [[noreturn]] void ap_entry(limine_mp_info *info) {
     // MAIR_EL1/TCR_EL1/TTBR0_EL1 are per-core; this core needs its own copy
     // of the identity map mmu::init() built before it can reach the UART.
     mmu::activate_this_core();
+    exceptions::install_vectors();
 
     print_ap_greeting(smp::me());
 

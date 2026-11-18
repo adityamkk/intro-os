@@ -30,4 +30,13 @@ void activate_this_core();
 // outside it.
 uint64_t virt_to_phys(const void *vaddr);
 
+// The exact 8-byte level-1 descriptor value init() placed at g_l1_table[0]
+// -- a single 1GiB block mapping, not a pointer to any sub-table. Every
+// per-thread page table (pagetable::new_address_space()) copies this same
+// value into its own index 0, so device MMIO stays reachable no matter
+// whose TTBR0 is active: copying a block descriptor's value needs no
+// sharing/aliasing, since (unlike a table descriptor) it doesn't point at
+// anything else that could need to be shared too. Only valid after init().
+uint64_t device_l1_descriptor();
+
 } // namespace mmu

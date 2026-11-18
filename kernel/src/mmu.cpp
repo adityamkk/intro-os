@@ -25,12 +25,20 @@ constexpr uint64_t kAf = 1ULL << 10;                       // access flag, must 
 constexpr uint64_t kPxn = 1ULL << 53;                      // non-executable at EL1
 constexpr uint64_t kUxn = 1ULL << 54;                      // non-executable at EL0
 
+// Cached copy of g_l1_table[0]'s value, set alongside it in init(). Every
+// per-thread address space's own L1 table (pagetable::new_address_space())
+// needs this same 8-byte value at its own index 0, so each thread can
+// still reach device MMIO no matter whose TTBR0 is currently active --
+// see device_l1_descriptor()'s doc comment in mmu.hpp.
+uint64_t g_device_l1_descriptor = 0;
+
 } // namespace
 
 namespace mmu {
 
 void init(uint64_t kernel_physical_base, uint64_t kernel_virtual_base) {
-    g_l1_table[0] = kDescValidBlock | kAttrIndx | kApEl1Rw | kShOuter | kAf | kPxn | kUxn;
+    g_device_l1_descriptor = kDescValidBlock | kAttrIndx | kApEl1Rw | kShOuter | kAf | kPxn | kUxn;
+    g_l1_table[0] = g_device_l1_descriptor;
 
     g_image_phys_offset = kernel_physical_base - kernel_virtual_base;
 
@@ -71,5 +79,7 @@ void activate_this_core() {
 uint64_t virt_to_phys(const void *vaddr) {
     return reinterpret_cast<uint64_t>(vaddr) + g_image_phys_offset;
 }
+
+uint64_t device_l1_descriptor() { return g_device_l1_descriptor; }
 
 } // namespace mmu
