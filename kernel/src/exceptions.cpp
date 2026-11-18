@@ -31,7 +31,7 @@ void handle_page_fault(uint64_t far) {
 
     VmeNode *v = vme::find(curr->vme_head, far);
     if (v == nullptr) {
-        KPANIC("page fault at an address outside the current thread's VME list");
+        // TODO: What should we do if vme::find returns a nullptr for the faulting address?
     }
     if (pagetable::is_resident(curr->ttbr0_phys, page)) {
         KPANIC("page fault on an already-resident page (no write-protection support)");
@@ -48,15 +48,23 @@ void handle_page_fault(uint64_t far) {
     // keeps two threads' private mappings from leaking into each other.
     memset(dst, 0, pmm::kPageSize);
 
-    uint64_t file_pos = v->file_offset + (page - v->start);
-    if (file_pos < v->backing_file.size()) {
-        // Naive by design: always goes straight to disk, no page cache.
-        v->backing_file.read(file_pos, dst, pmm::kPageSize);
-    }
-    // Else: this page lies entirely past the backing file's current
-    // length -- leave it all-zero, the usual private-mapping EOF behavior.
+    /*
+        TODO: Read the contents of the backing file into the page.
+        Things to keep in mind:
+        1. What file do we need to read into this page (if any)? Where do we get this info from?
+        2. Where in the file do we need to read into? How do we calculate this offset?
+        The method `File::read` in `fat32.cpp` may be useful here.
+        While reading directly from disk is technically valid, there are some issues with doing this. Can you spot them?
+    */
 
-    pagetable::map_page(curr->ttbr0_phys, page, phys, v->flags);
+    /*
+        TODO: Map this physical page in the page table for this thread
+        Things to keep in mind:
+        1. Where is the page table for this thread? How do we find it?
+        2. What is the virtual page and physical page we want to map?
+        3. What flags do we want to map this page with? Where is this information located?
+        The function `pagetable::map_page` in `pagetable.cpp` may be useful here.
+    */
 }
 
 } // namespace
